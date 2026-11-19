@@ -9,12 +9,12 @@ export default function ProfilePage({ currentUser, categories = [], onSaveProfil
 
   const majorCategories = categories.filter((c) => c.type === 'MAJOR');
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setSuccess('');
     try {
-      onSaveProfile({
+      await onSaveProfile({
         full_name: fullName,
         phone,
         department_id: departmentId,

@@ -70,12 +70,12 @@ export default function CouncilPage({
     selectedTopic?.status === 'COMPLETED' ||
     selectedTopic?.status === 'FAILED';
 
-  const handleSaveScore = (e) => {
+  const handleSaveScore = async (e) => {
     e.preventDefault();
     if (!selectedTopic) return;
     setFeedback({ type: '', text: '' });
     try {
-      const res = onSubmitCouncilScore({
+      const res = await onSubmitCouncilScore({
         topic_id: selectedTopic.topic_id,
         score: scoreValue,
         comment: commentText,
@@ -86,11 +86,11 @@ export default function CouncilPage({
     }
   };
 
-  const handleConfirmFinalize = () => {
+  const handleConfirmFinalize = async () => {
     if (!selectedTopic || !confirmState.decision) return;
     setFeedback({ type: '', text: '' });
     try {
-      const res = onFinalizeTopicDefense(selectedTopic.topic_id, confirmState.decision);
+      const res = await onFinalizeTopicDefense(selectedTopic.topic_id, confirmState.decision);
       setFeedback({ type: 'success', text: res.message });
     } catch (err) {
       setFeedback({ type: 'error', text: err.message });

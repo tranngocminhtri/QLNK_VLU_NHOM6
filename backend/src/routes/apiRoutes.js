@@ -1,141 +1,65 @@
-// Nhập thư viện express để tạo bộ định tuyến (Router) quản lý các đường dẫn API
+// ============================================================================
+// ĐỊNH TUYẾN API RESTful (Bảng 4.2.5 trong đề cương + các API quản trị bổ sung)
+// Mỗi đường dẫn đi qua: kiểm tra đăng nhập (JWT) -> kiểm tra vai trò (RBAC) -> Controller
+// ============================================================================
 const express = require('express');
-// Khởi tạo đối tượng router từ thư viện express
-const router = express.Router();
-// Nhập thư viện multer để hỗ trợ nhận file đính kèm (PDF, DOCX) từ người dùng gửi lên
 const multer = require('multer');
-
-// Cấu hình multer lưu trữ file tạm thời trên bộ nhớ RAM trước khi đẩy lên đám mây Supabase Storage
-const boNhoTam = multer.memoryStorage();
-// Khởi tạo công cụ upload với giới hạn dung lượng tối đa là 20MB (20 * 1024 * 1024 bytes) theo quy tắc BR03
-const congCuUpload = multer({
-  // Gắn bộ nhớ tạm đã cấu hình ở trên vào công cụ upload
-  storage: boNhoTam,
-  // Thiết lập giới hạn kích thước tệp tin tải lên
-  limits: { fileSize: 20 * 1024 * 1024 },
-});
-
-// Nhập các hàm kiểm tra đăng nhập và phân quyền RBAC từ file authMiddleware.js
 const { kiemTraDangNhap, kiemTraQuyen } = require('../middlewares/authMiddleware');
-// Nhập toàn bộ 15 hàm xử lý nghiệp vụ từ file apiController.js
-const apiController = require('../controllers/apiController');
+const auth = require('../controllers/authController');
+const topic = require('../controllers/topicController');
+const progress = require('../controllers/progressController');
+const council = require('../controllers/councilController');
+const admin = require('../controllers/adminController');
 
-// =========================================================================
-// NHÓM 1: ĐỊNH TUYẾN XÁC THỰC & TÀI KHOẢN CÁ NHÂN (UC01, UC02, UC03)
-// =========================================================================
+const router = express.Router();
 
-// Đường dẫn số 1: Đăng nhập hệ thống và nhận mã Token JWT (UC01)
-router.post('/auth/login', apiController.dangNhapHeThong);
+// Nhận file báo cáo vào RAM (tối đa 20MB - BR03) trước khi đẩy lên Supabase Storage
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
-// Đường dẫn số 2: Đăng xuất khỏi hệ thống (UC02) - yêu cầu đã đăng nhập
-router.post('/auth/logout', kiemTraDangNhap, apiController.dangXuatHeThong);
+const chiAdmin = [kiemTraDangNhap, kiemTraQuyen(['ADMIN'])];
 
-// Đường dẫn số 3: Xem thông tin hồ sơ cá nhân của chính mình (UC03)
-router.get('/users/profile', kiemTraDangNhap, apiController.xemHoSoCaNhan);
+// ---------------- NHÓM 1: XÁC THỰC & HỒ SƠ (UC01, UC02, UC03) ----------------
+router.get('/public/overview', auth.layTongQuanCongKhai);
+router.post('/auth/google', auth.dangNhapGoogle); // [1] UC01 - SSO Google Workspace
+router.post('/auth/login', auth.dangNhapMatKhau); // [1] UC01 - Email trường + mật khẩu (dự phòng)
+router.post('/auth/logout', kiemTraDangNhap, auth.dangXuat); // [2] UC02
+router.get('/users/profile', kiemTraDangNhap, auth.xemHoSo); // [3] UC03
+router.put('/users/profile', kiemTraDangNhap, auth.capNhatHoSo); // [4] UC03
+router.get('/data', kiemTraDangNhap, auth.layDuLieu); // Dữ liệu tổng hợp cho giao diện (lọc theo vai trò)
 
-// Đường dẫn số 4: Cập nhật số điện thoại và thông tin cá nhân (UC03)
-router.put('/users/profile', kiemTraDangNhap, apiController.capNhatHoSoCaNhan);
+// ---------------- NHÓM 2: ĐỀ TÀI (UC04, UC05, UC08, UC09, UC10, UC14, UC15, UC22) ----------------
+router.get('/topics', kiemTraDangNhap, topic.danhSachDeTai); // [5] UC05
+router.post('/topics', kiemTraDangNhap, kiemTraQuyen(['STUDENT', 'LECTURER']), topic.taoDeTai); // [6] UC04, UC08, UC22
+router.post('/topics/:id/apply', kiemTraDangNhap, kiemTraQuyen(['STUDENT']), topic.ungTuyen); // [7] UC05
+router.put('/topics/:id/approve', kiemTraDangNhap, kiemTraQuyen(['LECTURER', 'ADMIN']), topic.duyetUngVien); // [8] UC09
+router.put('/topics/:id/assign', ...chiAdmin, topic.khoaDuyetVaPhanCong); // [9] UC14, UC15
+router.put('/topics/:id/confirm', kiemTraDangNhap, kiemTraQuyen(['LECTURER', 'ADMIN']), topic.gvXacNhanPhanCong); // UC10
 
-// Đường dẫn quản trị: Quản trị viên Khoa (ADMIN) xóa vĩnh viễn tài khoản người dùng
-router.delete(
-  '/users/:id',
-  kiemTraDangNhap,
-  kiemTraQuyen(['ADMIN']),
-  apiController.xoaTaiKhoanNguoiDung
-);
+// ---------------- NHÓM 3: TÀI LIỆU, TIẾN ĐỘ, ĐIỂM QUÁ TRÌNH (UC06, UC11, UC12) ----------------
+router.post('/documents/upload', kiemTraDangNhap, kiemTraQuyen(['STUDENT']), upload.single('file'), progress.nopTaiLieu); // [10] UC06
+router.get('/documents/:id/file', kiemTraDangNhap, progress.taiTep); // UC07, UC11, UC19 - xem/tải file có kiểm tra quyền
+router.post('/tasks', kiemTraDangNhap, progress.taoThe);
+router.put('/tasks/:id', kiemTraDangNhap, kiemTraQuyen(['LECTURER', 'ADMIN']), progress.capNhatThe); // [11] UC11
+router.post('/topics/:id/comments', kiemTraDangNhap, kiemTraQuyen(['LECTURER', 'ADMIN']), progress.themBinhLuan); // UC11
+router.post('/scores/process', kiemTraDangNhap, kiemTraQuyen(['LECTURER', 'ADMIN']), progress.chotDiemQuaTrinh); // [12] UC12
 
-// =========================================================================
-// NHÓM 2: ĐỊNH TUYẾN QUẢN LÝ ĐỀ TÀI NGHIÊN CỨU KHOA HỌC (UC04, UC05, UC08, UC09, UC10, UC14, UC15, UC22)
-// =========================================================================
+// ---------------- NHÓM 4: HỘI ĐỒNG KHOA HỌC (UC16, UC20, UC21) ----------------
+router.post('/councils', ...chiAdmin, council.thanhLapHoiDong); // [13] UC16
+router.put('/councils/:id/topics', ...chiAdmin, council.ganDeTaiVaoHoiDong); // UC16
+router.post('/scores/council', kiemTraDangNhap, kiemTraQuyen(['LECTURER', 'ADMIN']), council.chamDiemBaoVe); // [14] UC20
+router.put('/topics/:id/finalize', kiemTraDangNhap, kiemTraQuyen(['LECTURER', 'ADMIN']), council.chotNghiemThu); // [15] UC21
 
-// Đường dẫn số 5: Lấy danh sách đề tài NCKH kèm bộ lọc trạng thái và từ khóa (UC05)
-router.get('/topics', apiController.layDanhSachDeTai);
+// ---------------- NHÓM 5: QUẢN TRỊ KHOA (UC13, UC17) & THÔNG BÁO (UC23) ----------------
+router.post('/timelines', ...chiAdmin, admin.luuTimeline);
+router.put('/timelines/:id', ...chiAdmin, admin.luuTimeline);
+router.delete('/timelines/:id', ...chiAdmin, admin.xoaTimeline);
+router.post('/categories', ...chiAdmin, admin.taoDanhMuc);
+router.delete('/categories/:id', ...chiAdmin, admin.xoaDanhMuc);
+router.post('/users', ...chiAdmin, admin.taoTaiKhoan);
+router.put('/users/:id/role', ...chiAdmin, admin.doiVaiTro);
+router.put('/users/:id/lock', ...chiAdmin, admin.khoaTaiKhoan);
+router.delete('/users/:id', ...chiAdmin, admin.xoaTaiKhoan);
+router.post('/admin/reset-sample-data', ...chiAdmin, admin.napLaiDuLieuMau);
+router.put('/notifications/read', kiemTraDangNhap, admin.danhDauDaDoc);
 
-// Đường dẫn số 6: Đăng ký hoặc đề xuất đề tài mới kèm kiểm tra trùng lặp Cosine Similarity (UC04, UC08, UC22)
-router.post(
-  '/topics',
-  kiemTraDangNhap,
-  kiemTraQuyen(['STUDENT', 'LECTURER', 'ADMIN']),
-  apiController.taoDeTaiMoi
-);
-
-// Đường dẫn số 7: Sinh viên ứng tuyển xin tham gia đề tài do Giảng viên đề xuất (UC05)
-router.post(
-  '/topics/:id/apply',
-  kiemTraDangNhap,
-  kiemTraQuyen(['STUDENT']),
-  apiController.ungTuyenDeTai
-);
-
-// Đường dẫn số 8: Giảng viên duyệt hoặc từ chối sinh viên vào nhóm nghiên cứu (UC09)
-router.put(
-  '/topics/:id/approve',
-  kiemTraDangNhap,
-  kiemTraQuyen(['LECTURER', 'ADMIN']),
-  apiController.duyetUngVienVaChotNhom
-);
-
-// Đường dẫn số 9: Quản lý Khoa xét duyệt thuyết minh đề tài và phân công Giảng viên hướng dẫn (UC10, UC14, UC15)
-router.put(
-  '/topics/:id/assign',
-  kiemTraDangNhap,
-  kiemTraQuyen(['ADMIN', 'LECTURER']),
-  apiController.phanCongGiangVien
-);
-
-// =========================================================================
-// NHÓM 3: ĐỊNH TUYẾN QUẢN LÝ TIẾN ĐỘ KANBAN, TÀI LIỆU & CHẤM ĐIỂM QUÁ TRÌNH (UC06, UC11, UC12)
-// =========================================================================
-
-// Đường dẫn số 10: Sinh viên tải tệp báo cáo (.pdf, .docx) lên máy chủ và đám mây Supabase Storage (UC06)
-router.post(
-  '/documents/upload',
-  kiemTraDangNhap,
-  congCuUpload.single('file'),
-  apiController.nopTaiLieuBaoCao
-);
-
-// Đường dẫn tải xuống trực tiếp tệp báo cáo vật lý về máy tính người dùng
-router.get('/documents/download/:filename', apiController.taiXuongTaiLieu);
-
-// Đường dẫn số 11: Cập nhật trạng thái thẻ công việc trên bảng tiến độ Kanban (UC11)
-router.put('/tasks/:id', kiemTraDangNhap, apiController.capNhatTienDoKanban);
-
-// Đường dẫn số 12: Giảng viên hướng dẫn chấm điểm quá trình theo các tiêu chí rubric (UC12)
-router.post(
-  '/scores/process',
-  kiemTraDangNhap,
-  kiemTraQuyen(['LECTURER', 'ADMIN']),
-  apiController.chotDiemQuaTrinh
-);
-
-// =========================================================================
-// NHÓM 4: ĐỊNH TUYẾN HỘI ĐỒNG NGHIỆM THU & CÔNG BỐ KẾT QUẢ (UC16, UC20, UC21)
-// =========================================================================
-
-// Đường dẫn số 13: Quản lý Khoa thành lập Hội đồng nghiệm thu và gán thành viên (UC16)
-router.post(
-  '/councils',
-  kiemTraDangNhap,
-  kiemTraQuyen(['ADMIN']),
-  apiController.thanhLapHoiDong
-);
-
-// Đường dẫn số 14: Thành viên Hội đồng chấm điểm nghiệm thu độc lập (UC20)
-router.post(
-  '/scores/council',
-  kiemTraDangNhap,
-  kiemTraQuyen(['COUNCIL', 'LECTURER', 'ADMIN']),
-  apiController.hoiDongChamDiem
-);
-
-// Đường dẫn số 15: Tự động tính điểm trung bình cộng và chốt kết quả nghiệm thu cuối cùng (UC21)
-router.put(
-  '/topics/:id/finalize',
-  kiemTraDangNhap,
-  kiemTraQuyen(['ADMIN', 'LECTURER', 'COUNCIL']),
-  apiController.chotNghiemThuDeTai
-);
-
-// Xuất đối tượng router ra ngoài để file index.js chính của Backend sử dụng
 module.exports = router;

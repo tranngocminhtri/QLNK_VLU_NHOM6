@@ -1,0 +1,11 @@
+# Biến môi trường chứa mật khẩu / khóa bí mật - KHÔNG BAO GIỜ commit
+.env
+.env.*
+!.env.example
+
+node_modules/
+dist/
+
+# File người dùng tải lên khi chạy thử cục bộ
+backend/uploads/
+backend/logs/

@@ -81,11 +81,11 @@ export default function LecturerPage({
 
   const fieldCategories = categories.filter((c) => c.type === 'FIELD');
 
-  const handleCreateTopic = (e) => {
+  const handleCreateTopic = async (e) => {
     e.preventDefault();
     setFeedback({ type: '', text: '' });
     try {
-      const res = onCreateLecturerTopic({
+      const res = await onCreateLecturerTopic({
         title,
         summary,
         requirements,
@@ -102,7 +102,7 @@ export default function LecturerPage({
     }
   };
 
-  const handleScoreSubmit = (e) => {
+  const handleScoreSubmit = async (e) => {
     e.preventDefault();
     if (!selectedTopic) return;
     setFeedback({ type: '', text: '' });
@@ -112,7 +112,7 @@ export default function LecturerPage({
       if (!Number.isNaN(numVal) && numVal < 5.0) {
         setIsEligible(false);
       }
-      const res = onSubmitProcessScore({
+      const res = await onSubmitProcessScore({
         topic_id: selectedTopic.topic_id,
         score: processScore,
         comment: processComment,
@@ -224,9 +224,9 @@ export default function LecturerPage({
               <KanbanBoard
                 topic={selectedTopic}
                 canEditStatus={!selectedTopic.is_frozen}
-                onMoveTask={(taskId, newStatus) => {
+                onMoveTask={async (taskId, newStatus) => {
                   try {
-                    const res = onUpdateTaskAndComment({
+                    const res = await onUpdateTaskAndComment({
                       task_id: taskId,
                       topic_id: selectedTopic.topic_id,
                       new_status: newStatus,
@@ -236,9 +236,9 @@ export default function LecturerPage({
                     setFeedback({ type: 'error', text: err.message });
                   }
                 }}
-                onAddComment={(content) => {
+                onAddComment={async (content) => {
                   try {
-                    const res = onUpdateTaskAndComment({
+                    const res = await onUpdateTaskAndComment({
                       topic_id: selectedTopic.topic_id,
                       comment_content: content,
                     });
@@ -247,9 +247,9 @@ export default function LecturerPage({
                     setFeedback({ type: 'error', text: err.message });
                   }
                 }}
-                onCreateTask={(taskTitle) => {
+                onCreateTask={async (taskTitle) => {
                   try {
-                    const res = onUpdateTaskAndComment({
+                    const res = await onUpdateTaskAndComment({
                       topic_id: selectedTopic.topic_id,
                       new_task_title: taskTitle,
                     });
@@ -420,9 +420,9 @@ export default function LecturerPage({
                         <button
                           type="button"
                           className="btn btn-danger btn-sm"
-                          onClick={() => {
+                          onClick={async () => {
                             try {
-                              const res = onConfirmAssignment(topic.topic_id, {
+                              const res = await onConfirmAssignment(topic.topic_id, {
                                 accept: false,
                                 reject_reason: rejectReason,
                               });
@@ -450,9 +450,9 @@ export default function LecturerPage({
                       <button
                         type="button"
                         className="btn btn-primary"
-                        onClick={() => {
+                        onClick={async () => {
                           try {
-                            const res = onConfirmAssignment(topic.topic_id, { accept: true });
+                            const res = await onConfirmAssignment(topic.topic_id, { accept: true });
                             setFeedback({ type: 'success', text: res.message });
                             setSelectedTopicId(topic.topic_id);
                             if (onSelectTab) onSelectTab('KANBAN');
@@ -546,9 +546,9 @@ export default function LecturerPage({
                                   <button
                                     type="button"
                                     className="btn-xs btn-preview"
-                                    onClick={() => {
+                                    onClick={async () => {
                                       try {
-                                        const res = onReviewApplicant(
+                                        const res = await onReviewApplicant(
                                           topic.topic_id,
                                           m.id,
                                           'APPROVED'
@@ -564,9 +564,9 @@ export default function LecturerPage({
                                   <button
                                     type="button"
                                     className="btn-xs btn-move"
-                                    onClick={() => {
+                                    onClick={async () => {
                                       try {
-                                        const res = onReviewApplicant(
+                                        const res = await onReviewApplicant(
                                           topic.topic_id,
                                           m.id,
                                           'REJECTED'
@@ -591,9 +591,9 @@ export default function LecturerPage({
                       <button
                         type="button"
                         className="btn btn-primary btn-block"
-                        onClick={() => {
+                        onClick={async () => {
                           try {
-                            const res = onFinalizeGroup(topic.topic_id);
+                            const res = await onFinalizeGroup(topic.topic_id);
                             setFeedback({ type: 'success', text: res.message });
                           } catch (err) {
                             setFeedback({ type: 'error', text: err.message });
