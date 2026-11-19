@@ -44,25 +44,12 @@ export default function StudentPage({
 
   // Form tải lên báo cáo thực tế
   const [selectedFile, setSelectedFile] = useState(null);
-  const [selectedFileDataUrl, setSelectedFileDataUrl] = useState('');
   const [docDesc, setDocDesc] = useState('');
   const [newTaskForDoc, setNewTaskForDoc] = useState('');
 
-  // Hàm đọc nội dung nhị phân của tệp khi sinh viên chọn file từ máy tính
+  // Lưu tệp sinh viên chọn từ máy tính; file thật được gửi lên máy chủ khi bấm Nộp
   const handleSelectRealFile = (e) => {
-    const file = e.target.files?.[0] || null;
-    setSelectedFile(file);
-    if (!file) {
-      setSelectedFileDataUrl('');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setSelectedFileDataUrl(reader.result);
-      }
-    };
-    reader.readAsDataURL(file);
+    setSelectedFile(e.target.files?.[0] || null);
   };
 
   const liveSimilarity = useMemo(() => {
@@ -87,7 +74,7 @@ export default function StudentPage({
 
   const fieldCategories = categories.filter((c) => c.type === 'FIELD');
 
-  const handleProposeSubmit = (e) => {
+  const handleProposeSubmit = async (e) => {
     e.preventDefault();
     setFeedback({ type: '', text: '' });
     try {
@@ -95,7 +82,7 @@ export default function StudentPage({
         .split(/[,;\s]+/)
         .map((s) => s.trim())
         .filter(Boolean);
-      const res = onCreateStudentTopic({
+      const res = await onCreateStudentTopic({
         title,
         summary,
         requirements,
@@ -114,11 +101,11 @@ export default function StudentPage({
     }
   };
 
-  const handleApplySubmit = (e, topicId) => {
+  const handleApplySubmit = async (e, topicId) => {
     e.preventDefault();
     setFeedback({ type: '', text: '' });
     try {
-      const res = onApplyToTopic(topicId, coverLetter);
+      const res = await onApplyToTopic(topicId, coverLetter);
       setFeedback({ type: 'success', text: res.message });
       setApplyingTopicId(null);
       setCoverLetter('');
@@ -127,21 +114,19 @@ export default function StudentPage({
     }
   };
 
-  const handleUploadSubmit = (e) => {
+  const handleUploadSubmit = async (e) => {
     e.preventDefault();
     setFeedback({ type: '', text: '' });
     if (!myActiveTopic) return;
     try {
-      const res = onUploadDocument({
+      const res = await onUploadDocument({
         topic_id: myActiveTopic.topic_id,
         file: selectedFile,
-        fileDataUrl: selectedFileDataUrl,
         description: docDesc,
         createTaskTitle: newTaskForDoc,
       });
       setFeedback({ type: 'success', text: res.message });
       setSelectedFile(null);
-      setSelectedFileDataUrl('');
       setDocDesc('');
       setNewTaskForDoc('');
     } catch (err) {
@@ -481,7 +466,9 @@ export default function StudentPage({
                 topic={myActiveTopic}
                 canEditStatus={false}
                 onCreateTask={(taskTitle) =>
-                  onCreateTask(myActiveTopic.topic_id, taskTitle)
+                  onCreateTask(myActiveTopic.topic_id, taskTitle).catch((err) =>
+                    setFeedback({ type: 'error', text: err.message })
+                  )
                 }
                 onPreviewDocument={(doc) => setPreviewDoc(doc)}
               />

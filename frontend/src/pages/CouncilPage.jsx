@@ -65,17 +65,23 @@ export default function CouncilPage({
     return (sum / finalScores.length).toFixed(2);
   }, [finalScores]);
 
+  // UC21: chỉ Chủ tịch / Thư ký của Hội đồng chấm đề tài này được chốt nghiệm thu
+  const myRoleInTopicCouncil = councils
+    .find((c) => c.council_id === selectedTopic?.council_id)
+    ?.council_members?.find((cm) => cm.lecturer_id === currentUser.user_id)?.role_in_council;
+  const canFinalize = myRoleInTopicCouncil === 'CHUTICH' || myRoleInTopicCouncil === 'THUKY';
+
   const isFrozen =
     selectedTopic?.is_frozen ||
     selectedTopic?.status === 'COMPLETED' ||
     selectedTopic?.status === 'FAILED';
 
-  const handleSaveScore = (e) => {
+  const handleSaveScore = async (e) => {
     e.preventDefault();
     if (!selectedTopic) return;
     setFeedback({ type: '', text: '' });
     try {
-      const res = onSubmitCouncilScore({
+      const res = await onSubmitCouncilScore({
         topic_id: selectedTopic.topic_id,
         score: scoreValue,
         comment: commentText,
@@ -86,11 +92,11 @@ export default function CouncilPage({
     }
   };
 
-  const handleConfirmFinalize = () => {
+  const handleConfirmFinalize = async () => {
     if (!selectedTopic || !confirmState.decision) return;
     setFeedback({ type: '', text: '' });
     try {
-      const res = onFinalizeTopicDefense(selectedTopic.topic_id, confirmState.decision);
+      const res = await onFinalizeTopicDefense(selectedTopic.topic_id, confirmState.decision);
       setFeedback({ type: 'success', text: res.message });
     } catch (err) {
       setFeedback({ type: 'error', text: err.message });
@@ -313,7 +319,10 @@ export default function CouncilPage({
                     </p>
                   </div>
 
-                  {!isFrozen && (
+                  {!isFrozen && !canFinalize && (
+                    <p className="muted-text">Chỉ Chủ tịch hoặc Thư ký Hội đồng được chốt quyết định nghiệm thu.</p>
+                  )}
+                  {!isFrozen && canFinalize && (
                     <div className="apply-btn-group">
                       <button
                         type="button"

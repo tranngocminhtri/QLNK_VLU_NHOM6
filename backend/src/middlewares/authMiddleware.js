@@ -1,65 +1,80 @@
 // ============================================================================
 // FILE: backend/src/middlewares/authMiddleware.js
-// MỤC ĐÍCH: Kiểm tra "Thẻ từ an ninh" (Token) và Phân quyền theo vai trò (RBAC)
+// MỤC ĐÍCH: Kiểm tra "Thẻ từ an ninh" (JWT) và Phân quyền theo vai trò (RBAC)
 // Giải thích dễ nhớ: Giống như bảo vệ đứng ở cửa phòng Khoa, kiểm tra xem người
-// vào có đeo thẻ sinh viên/giảng viên hợp lệ không và có đúng quyền vào phòng đó không.
+// vào có đeo thẻ hợp lệ (chữ ký JWT đúng, chưa hết hạn) và có đúng quyền vào phòng đó không.
 // ============================================================================
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
+const prisma = require('../config/prisma');
+const { JWT_SECRET, JWT_EXPIRES_IN } = require('../config/auth');
 
-// 1. Hàm kiểm tra người dùng đã đăng nhập hay chưa (Authentication)
-function kiemTraDangNhap(req, res, next) {
-  // Lấy thông tin thẻ Token từ phần Header 'authorization' mà React gửi lên
-  const authHeader = req.headers['authorization'];
+// Danh sách đen các Token đã đăng xuất (UC02 bước 3): mã jti -> thời điểm hết hạn
+// shortcut: lưu trong RAM nên mất khi khởi động lại máy chủ; chuyển sang bảng CSDL/Redis nếu chạy nhiều máy chủ
+const tokenDaThuHoi = new Map();
 
-  // Nếu không gửi kèm thẻ Token thì chặn lại và báo lỗi 401 (Chưa xác thực)
-  if (!authHeader) {
-    return res.status(401).json({
-      message: 'Bạn chưa đăng nhập. Vui lòng đăng nhập bằng email trường cấp (@vanlanguni.vn).'
-    });
-  }
-
-  // Cắt bỏ chữ "Bearer " ở đầu để lấy đúng mã Token bên trong
-  const token = authHeader.replace('Bearer ', '').trim();
-
-  // Kiểm tra định dạng mã Token của hệ thống (có dạng: jwt_vlu_<userId>_<role>)
-  if (!token.startsWith('jwt_vlu_')) {
-    return res.status(401).json({
-      message: 'Phiên làm việc không hợp lệ hoặc đã hết hạn, vui lòng đăng nhập lại.'
-    });
-  }
-
-  // Tách chuỗi Token bằng dấu gạch dưới '_' để lấy mã người dùng (userId) và quyền (role)
-  const cacPhan = token.split('_');
-  // Gắn thông tin người dùng đã giải mã vào biến req.user để các bước sau sử dụng
-  req.user = {
-    user_id: cacPhan[2] || '',
-    role: cacPhan[3] || 'STUDENT'
-  };
-
-  // Cho phép đi tiếp vào hàm xử lý chính (Controller)
-  next();
+// Cấp thẻ JWT chứa mã người dùng và vai trò sau khi đăng nhập thành công (UC01 bước 6)
+function capToken(user) {
+  return jwt.sign({ sub: user.user_id, role: user.role, jti: crypto.randomUUID() }, JWT_SECRET, {
+    expiresIn: JWT_EXPIRES_IN,
+  });
 }
 
-// 2. Hàm kiểm tra quyền hạn theo vai trò (Authorization - RBAC)
-function kiemTraQuyen(danhSachQuyenChoPhep) {
-  // Trả về một hàm kiểm tra trung gian của Express
-  return function (req, res, next) {
-    // Lấy quyền hiện tại của người dùng đã được giải mã ở bước trên
-    const quyenHienTai = req.user ? req.user.role : '';
+// Vô hiệu hóa Token hiện tại khi người dùng đăng xuất
+function thuHoiToken(payload) {
+  const bayGio = Date.now() / 1000;
+  for (const [jti, exp] of tokenDaThuHoi) if (exp < bayGio) tokenDaThuHoi.delete(jti);
+  tokenDaThuHoi.set(payload.jti, payload.exp);
+}
 
-    // Nếu quyền của người dùng không nằm trong danh sách được phép thì chặn lại (Lỗi 403)
-    if (!danhSachQuyenChoPhep.includes(quyenHienTai)) {
+// 1. Kiểm tra người dùng đã đăng nhập hay chưa (Authentication)
+async function kiemTraDangNhap(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+  if (!token) {
+    return res.status(401).json({
+      message: 'Bạn chưa đăng nhập. Vui lòng đăng nhập bằng email trường cấp (@vanlanguni.vn).',
+    });
+  }
+
+  let payload;
+  try {
+    // Xác minh chữ ký và thời hạn của thẻ; thẻ bị sửa hoặc hết hạn sẽ ném lỗi
+    payload = jwt.verify(token, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ message: 'Phiên làm việc đã hết hạn, vui lòng đăng nhập lại.' });
+  }
+  if (tokenDaThuHoi.has(payload.jti)) {
+    return res.status(401).json({ message: 'Phiên làm việc đã kết thúc, vui lòng đăng nhập lại.' });
+  }
+
+  // Luôn đọc vai trò mới nhất từ CSDL để việc Admin đổi quyền / khóa tài khoản có hiệu lực ngay
+  const user = await prisma.user.findUnique({
+    where: { user_id: payload.sub },
+    include: { department: true },
+  });
+  if (!user || user.is_locked) {
+    return res.status(401).json({
+      message: 'Tài khoản không tồn tại hoặc đã bị khóa bởi Quản trị viên Khoa.',
+    });
+  }
+
+  delete user.password_hash;
+  req.user = user;
+  req.tokenPayload = payload;
+  return next();
+}
+
+// 2. Kiểm tra quyền hạn theo vai trò (Authorization - RBAC)
+function kiemTraQuyen(danhSachQuyenChoPhep) {
+  return function (req, res, next) {
+    if (!req.user || !danhSachQuyenChoPhep.includes(req.user.role)) {
       return res.status(403).json({
-        message: 'Truy cập bị từ chối! Tài khoản của bạn không có quyền thực hiện chức năng này.'
+        message: 'Truy cập bị từ chối! Tài khoản của bạn không có quyền thực hiện chức năng này.',
       });
     }
-
-    // Nếu đúng quyền thì cho phép đi tiếp
-    next();
+    return next();
   };
 }
 
-// Xuất 2 hàm bảo vệ ra để gắn vào các đường dẫn API (Routes)
-module.exports = {
-  kiemTraDangNhap,
-  kiemTraQuyen
-};
+module.exports = { capToken, thuHoiToken, kiemTraDangNhap, kiemTraQuyen };

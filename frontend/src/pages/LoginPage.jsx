@@ -1,29 +1,87 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-export default function LoginPage({ onLoginSSO, onBackHome }) {
+// Google OAuth Client ID (Google Cloud Console). Để trống thì ẩn nút "Đăng nhập với Google"
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+// Mật khẩu chung của các tài khoản dữ liệu mẫu (backend/prisma/seed.js), chỉ dùng khi chạy thử cục bộ
+const MAT_KHAU_DU_LIEU_MAU = 'vlu@2026';
+
+// Nạp thư viện Google Identity Services một lần duy nhất
+let napGoogleScript = null;
+function taiThuVienGoogle() {
+  napGoogleScript =
+    napGoogleScript ||
+    new Promise(function (resolve, reject) {
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error('Không tải được dịch vụ đăng nhập Google.'));
+      document.head.appendChild(script);
+    });
+  return napGoogleScript;
+}
+
+export default function LoginPage({ notice, onLoginGoogle, onLoginPassword, onBackHome }) {
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('vlu@2026');
+  const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState(notice || '');
+  const [dangXuLy, setDangXuLy] = useState(false);
+  const nutGoogleRef = useRef(null);
+  const onLoginGoogleRef = useRef(onLoginGoogle);
+  useEffect(function () {
+    onLoginGoogleRef.current = onLoginGoogle;
+  });
 
-  function handleSubmit(e) {
-    e.preventDefault();
+  // UC01: hiển thị nút "Đăng nhập với Google"; Google trả về ID Token (credential) để gửi lên máy chủ xác minh
+  useEffect(function () {
+    if (!GOOGLE_CLIENT_ID) return;
+    taiThuVienGoogle()
+      .then(function () {
+        window.google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          hd: 'vanlanguni.vn',
+          callback: async function (phanHoi) {
+            setErrorMsg('');
+            try {
+              await onLoginGoogleRef.current(phanHoi.credential);
+            } catch (err) {
+              setErrorMsg(err.message);
+            }
+          },
+        });
+        if (nutGoogleRef.current) {
+          window.google.accounts.id.renderButton(nutGoogleRef.current, {
+            theme: 'outline',
+            size: 'large',
+            text: 'signin_with',
+            width: 320,
+          });
+        }
+      })
+      .catch((err) => setErrorMsg(err.message));
+  }, []);
+
+  async function dangNhap(emailDangNhap, matKhau) {
     setErrorMsg('');
+    setDangXuLy(true);
     try {
-      onLoginSSO(email);
+      await onLoginPassword(emailDangNhap, matKhau);
     } catch (err) {
       setErrorMsg(err.message);
+      setDangXuLy(false);
     }
   }
 
+  function handleSubmit(e) {
+    e.preventDefault();
+    dangNhap(email, password);
+  }
+
   function handleQuickLogin(targetEmail) {
-    setErrorMsg('');
     setEmail(targetEmail);
-    try {
-      onLoginSSO(targetEmail);
-    } catch (err) {
-      setErrorMsg(err.message);
-    }
+    setPassword(MAT_KHAU_DU_LIEU_MAU);
+    dangNhap(targetEmail, MAT_KHAU_DU_LIEU_MAU);
   }
 
   return (
@@ -65,6 +123,15 @@ export default function LoginPage({ onLoginSSO, onBackHome }) {
           </div>
         )}
 
+        {GOOGLE_CLIENT_ID && (
+          <>
+            <div ref={nutGoogleRef} style={{ display: 'flex', justifyContent: 'center', marginBottom: '14px' }} />
+            <div className="modern-divider">
+              <span>Hoặc đăng nhập bằng mật khẩu</span>
+            </div>
+          </>
+        )}
+
         <form className="modern-auth-form" onSubmit={handleSubmit}>
           <div className="modern-field">
             <label htmlFor="vlu-email-input">Tài khoản Email (@vanlanguni.vn)</label>
@@ -91,7 +158,7 @@ export default function LoginPage({ onLoginSSO, onBackHome }) {
           </div>
 
           <div className="modern-field">
-            <label htmlFor="vlu-pass-input">Mật khẩu xác thực SSO</label>
+            <label htmlFor="vlu-pass-input">Mật khẩu</label>
             <div className="modern-input-wrap">
               <span className="modern-input-icon">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -121,20 +188,20 @@ export default function LoginPage({ onLoginSSO, onBackHome }) {
           <div className="modern-auth-policy">
             <span>🛡️</span>
             <small>
-              Hệ thống chỉ cho phép đăng nhập các tài khoản <b>@vanlanguni.vn</b> đã được Quản trị viên (Admin) tạo và cấp quyền trước.
+              Hệ thống chỉ cho phép đăng nhập bằng email <b>@vanlanguni.vn</b> do nhà trường cấp.
             </small>
           </div>
 
-          <button type="submit" className="modern-submit-btn">
-            <span className="google-badge-circle">G</span>
-            <span>Đăng nhập với Văn Lang SSO</span>
+          <button type="submit" className="modern-submit-btn" disabled={dangXuLy}>
+            <span>{dangXuLy ? 'Đang đăng nhập...' : 'Đăng nhập'}</span>
           </button>
         </form>
 
-        {/* Chọn nhanh tài khoản đã được Admin cấp sẵn trong hệ thống */}
+        {/* Chọn nhanh tài khoản dữ liệu mẫu - chỉ hiện khi chạy thử cục bộ (npm run dev) */}
+        {import.meta.env.DEV && (
         <div className="modern-quick-accounts">
           <div className="modern-divider">
-            <span>Tài khoản đã được cấp trên hệ thống</span>
+            <span>Tài khoản dữ liệu mẫu (mật khẩu: vlu@2026)</span>
           </div>
 
           <div className="modern-account-pills">
@@ -187,6 +254,7 @@ export default function LoginPage({ onLoginSSO, onBackHome }) {
             </button>
           </div>
         </div>
+        )}
       </div>
     </div>
   );

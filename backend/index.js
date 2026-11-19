@@ -1,90 +1,69 @@
-// Nạp các biến môi trường từ file .env (như DATABASE_URL, SUPABASE_URL, PORT) vào hệ thống
+// Nạp các biến môi trường từ file .env (DATABASE_URL, JWT_SECRET, SUPABASE_URL, ...) vào hệ thống
 require('dotenv').config();
 
-// Gọi thư viện path và fs để quản lý thư mục chứa file báo cáo và giao diện web
 const path = require('path');
 const fs = require('fs');
-
-// Gọi thư viện express để tạo máy chủ (giống như xây một quầy tiếp tân)
 const express = require('express');
-
-// Gọi thư viện cors để cho phép giao diện React gửi yêu cầu sang Backend
 const cors = require('cors');
-
-// Gọi Prisma để nói chuyện với Database (giống như thuê phiên dịch viên tiếng cơ sở dữ liệu)
-const { PrismaClient } = require('@prisma/client');
-
-// Gọi bộ định tuyến chứa toàn bộ đường dẫn API chuẩn RESTful của hệ thống
+const multer = require('multer');
+const prisma = require('./src/config/prisma');
 const apiRoutes = require('./src/routes/apiRoutes');
+const { ghiLogLoi } = require('./src/services/notificationService');
 
-// Khởi tạo máy chủ và phiên dịch viên
 const app = express();
-// Khởi tạo đối tượng kết nối cơ sở dữ liệu thông qua Prisma Client
-const prisma = new PrismaClient();
 
-// Đảm bảo thư mục lưu trữ file báo cáo vật lý (uploads) luôn tồn tại
-const thuMucUploads = path.join(__dirname, 'uploads');
-if (!fs.existsSync(thuMucUploads)) {
-  fs.mkdirSync(thuMucUploads, { recursive: true });
-}
+// Chỉ cho phép giao diện React (Vercel) gọi API; để trống FRONTEND_URL thì cho phép mọi nguồn (chạy thử cục bộ)
+const nguonChoPhep = (process.env.FRONTEND_URL || '').split(',').map((s) => s.trim()).filter(Boolean);
+app.use(cors(nguonChoPhep.length ? { origin: nguonChoPhep } : undefined));
+app.use(express.json({ limit: '1mb' }));
 
-// Bật tính năng CORS để trình duyệt không chặn các yêu cầu từ giao diện Frontend
-app.use(cors());
-
-// Bật tính năng đọc dữ liệu định dạng JSON với giới hạn 25MB để hỗ trợ tải tài liệu lớn
-app.use(express.json({ limit: '25mb' }));
-app.use(express.urlencoded({ extended: true, limit: '25mb' }));
-
-// Phục vụ trực tiếp các tệp báo cáo PDF / DOCX đã tải lên tại đường dẫn /uploads
-app.use('/uploads', express.static(thuMucUploads));
-
-// Tạo đường dẫn kiểm tra sức khỏe máy chủ tại địa chỉ GET /api/health
+// Kiểm tra sức khỏe máy chủ (Render dùng đường dẫn này để biết máy chủ còn sống)
 app.get('/api/health', function (req, res) {
-  // Trả về mã 200 kèm thông báo xác nhận máy chủ đang hoạt động tốt
-  return res.status(200).json({
-    // Đánh dấu trạng thái thành công
-    success: true,
-    // Tin nhắn phản hồi tiếng Việt rõ ràng
-    message: 'Máy chủ Quản lý NCKH Sinh viên Văn Lang đang hoạt động ổn định!',
-  });
+  res.json({ success: true, message: 'Máy chủ Quản lý NCKH Sinh viên Văn Lang đang hoạt động ổn định!' });
 });
 
-// Gắn toàn bộ các đường dẫn API nghiệp vụ vào tiền tố gốc /api
 app.use('/api', apiRoutes);
 
-// Phục vụ trực tiếp giao diện Website (Frontend đã đóng gói tại ../frontend/dist) trên cùng 1 đường link duy nhất
+// Khi chạy chung 1 máy chủ: phục vụ luôn giao diện React đã build tại ../frontend/dist
 const thuMucFrontendDist = path.join(__dirname, '../frontend/dist');
 if (fs.existsSync(thuMucFrontendDist)) {
   app.use(express.static(thuMucFrontendDist));
   app.use(function (req, res, next) {
-    if (req.method === 'GET' && !req.path.startsWith('/api') && !req.path.startsWith('/uploads')) {
+    if (req.method === 'GET' && !req.path.startsWith('/api')) {
       return res.sendFile(path.join(thuMucFrontendDist, 'index.html'));
     }
     return next();
   });
 }
 
-// Viết một hàm thử gõ cửa kho dữ liệu
-async function checkDatabase() {
-  try {
-    // Yêu cầu Prisma thử kết nối vào Supabase
-    await prisma.$connect();
-    // In thông báo kết nối thành công ra màn hình Terminal
-    console.log("✅ Tuyệt vời! Đã kết nối thành công với cơ sở dữ liệu Supabase!");
-  } catch (error) {
-    // Nếu sai link hoặc sai mật khẩu sẽ văng ra báo lỗi ở đây
-    console.log("ℹ️ Máy chủ đang vận hành với kho lưu trữ trực tiếp. Chi tiết CSDL:", error.message);
+app.use('/api', function (req, res) {
+  res.status(404).json({ message: 'Không tìm thấy đường dẫn API.' });
+});
+
+// Bộ xử lý lỗi chung: chuyển mọi lỗi nghiệp vụ / CSDL thành JSON { message } cho giao diện
+// eslint-disable-next-line no-unused-vars
+app.use(function (err, req, res, next) {
+  if (err.status) return res.status(err.status).json({ message: err.message });
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({ message: 'Chỉ hỗ trợ file PDF/DOCX dưới 20MB.' });
   }
-}
+  if (err.code === 'P2025') return res.status(404).json({ message: 'Không tìm thấy dữ liệu cần thao tác.' });
+  if (err.code === 'P2002') return res.status(400).json({ message: 'Dữ liệu bị trùng lặp với bản ghi đã có.' });
+  if (err.code === 'P2003') return res.status(400).json({ message: 'Dữ liệu liên kết không hợp lệ.' });
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ message: 'Dữ liệu gửi lên không đúng định dạng JSON.' });
 
-// Chạy hàm kiểm tra ngay khi file này được gọi
-checkDatabase();
+  console.error(err);
+  ghiLogLoi(`${req.method} ${req.originalUrl}: ${err.stack || err.message}`);
+  return res.status(500).json({ message: 'Lỗi máy chủ, vui lòng thử lại sau.' });
+});
 
-// Lấy cổng chạy máy chủ từ biến môi trường PORT, nếu không có thì mặc định dùng cổng 5000
 const CONG_MAY_CHU = process.env.PORT || 5000;
 
-// Mở cửa quầy tiếp tân ở cổng số 5000 để phục vụ cả Giao diện Web + API + Xem/Tải File trên 1 link duy nhất
+prisma
+  .$connect()
+  .then(() => console.log('✅ Đã kết nối thành công với cơ sở dữ liệu PostgreSQL!'))
+  .catch((err) => console.error('❌ Không kết nối được cơ sở dữ liệu:', err.message));
+
 app.listen(CONG_MAY_CHU, function () {
-  // Hiển thị đường dẫn máy chủ đang chạy trên cửa sổ dòng lệnh
-  console.log("🚀 Website & Máy chủ Quản lý NCKH đang hoạt động tại: http://localhost:" + CONG_MAY_CHU);
+  console.log('🚀 Máy chủ Quản lý NCKH đang hoạt động tại: http://localhost:' + CONG_MAY_CHU);
 });

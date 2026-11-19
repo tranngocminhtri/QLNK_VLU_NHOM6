@@ -1,7 +1,8 @@
-// Khai báo cho Prisma biết hệ thống dùng cơ sở dữ liệu PostgreSQL
+// Khai báo cho Prisma biết hệ thống dùng cơ sở dữ liệu PostgreSQL (Supabase)
+// Chuỗi kết nối đọc từ biến môi trường DATABASE_URL trong file .env (không ghi thẳng mật khẩu vào mã nguồn)
 datasource db {
   provider = "postgresql"
-  url      = "postgresql://postgres.mbypfxgetzflyexeipkf:tranngocminhtri@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres"
+  url      = env("DATABASE_URL")
 }
 
 // Cấu hình bộ sinh mã để gọi lệnh trong Node.js
@@ -9,7 +10,7 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// 1. BẢNG DANH MỤC (Lưu thông tin Khoa, Chuyên ngành)
+// 1. BẢNG DANH MỤC (Lưu thông tin Lĩnh vực, Chuyên ngành)
 model Category {
   // Khóa chính
   category_id String  @id @default(uuid())
@@ -17,9 +18,10 @@ model Category {
   name        String
   // Loại danh mục: FIELD (Lĩnh vực) hoặc MAJOR (Chuyên ngành)
   type        String
-  
-  // Mối quan hệ: 1 danh mục có nhiều người dùng
-  users       User[]
+
+  // Mối quan hệ: 1 chuyên ngành có nhiều người dùng, 1 lĩnh vực có nhiều đề tài
+  users       User[]  @relation("UserDepartment")
+  topics      Topic[] @relation("TopicField")
 }
 
 // 2. BẢNG NGƯỜI DÙNG (Sinh viên, Giảng viên, Admin)
@@ -28,20 +30,24 @@ model User {
   user_id       String    @id @default(uuid())
   // Email trường cấp, không được trùng lặp
   email         String    @unique
-  // Mật khẩu đã được mã hóa
-  password_hash String
+  // Mật khẩu đã được mã hóa băm (scrypt). Tài khoản chỉ đăng nhập qua Google SSO thì để trống
+  password_hash String    @default("")
   // Họ và tên người dùng
   full_name     String
   // Mã số sinh viên (MSSV) hoặc Mã giảng viên (MGV)
   user_code     String    @unique
   // Số điện thoại (có thể bỏ trống)
   phone         String?
-  // Phân quyền: STUDENT, LECTURER, ADMIN, COUNCIL
+  // Phân quyền: STUDENT, LECTURER, ADMIN (thành viên Hội đồng là LECTURER được gán vào bảng council_members)
   role          String
-  
-  // Khóa ngoại trỏ về bảng Category (Khoa/Chuyên ngành)
+  // Chức danh hiển thị (VD: Phó Trưởng Bộ môn Kỹ thuật Phần mềm)
+  title_info    String?
+  // Admin khóa tài khoản vi phạm (UC17)
+  is_locked     Boolean   @default(false)
+
+  // Khóa ngoại trỏ về bảng Category (Chuyên ngành)
   department_id String?
-  department    Category? @relation(fields: [department_id], references: [category_id])
+  department    Category? @relation("UserDepartment", fields: [department_id], references: [category_id], onDelete: SetNull)
 
   // CÁC MỐI QUAN HỆ NGƯỢC (Giúp Node.js dễ dàng truy xuất dữ liệu)
   topics_guided   Topic[]         @relation("LecturerTopics")
@@ -60,7 +66,7 @@ model Council {
   name            String
   // Ngày tạo hội đồng, tự động lấy giờ hiện tại
   created_at      DateTime        @default(now())
-  
+
   // Mối quan hệ ngược
   topics          Topic[]
   council_members CouncilMember[]
@@ -68,68 +74,86 @@ model Council {
 
 // 4. BẢNG ĐỀ TÀI (Thông tin cốt lõi của nghiên cứu)
 model Topic {
-  // Khóa chính
-  topic_id         String          @id @default(uuid())
+  // Khóa chính (dạng DT-2026-001)
+  topic_id                String        @id @default(uuid())
   // Tên đề tài
-  title            String
+  title                   String
   // Tóm tắt nội dung
-  summary          String?
+  summary                 String?
   // Yêu cầu đối với sinh viên ứng tuyển
-  requirements     String?
+  requirements            String?
   // Số lượng sinh viên tối đa trong nhóm
-  max_members      Int             @default(5)
-  // Trạng thái: PENDING_ADMIN, IN_PROGRESS, COMPLETED...
-  status           String
-  // Tỷ lệ phần trăm đạo văn (từ thuật toán check)
-  similarity_score Float?
-  
+  max_members             Int           @default(5)
+  // Trạng thái: PENDING_ADMIN, RECRUITING, PENDING_LECTURER, IN_PROGRESS, PENDING_COUNCIL, COMPLETED, FAILED
+  status                  String
+  // Tỷ lệ phần trăm trùng lặp (từ thuật toán Cosine Similarity)
+  similarity_score        Float?
+  // Ai khởi tạo đề tài: STUDENT (tự đề xuất) hoặc LECTURER (công bố tuyển sinh)
+  created_by_role         String        @default("STUDENT")
+  // Nguyện vọng GVHD sinh viên ghi khi đề xuất (không chọn cứng - UC04)
+  preferred_lecturer_note String?
+  // Lý do Khoa từ chối sơ bộ (UC14 3a)
+  reject_reason           String?
+  // Ghi chú khi GVHD từ chối nhận hướng dẫn (UC10 3a)
+  lecturer_reject_note    String?
+  // Đã chốt nghiệm thu và đóng băng dữ liệu (UC21)
+  is_frozen               Boolean       @default(false)
+  // Thời điểm tạo đề tài
+  created_at              DateTime      @default(now())
+
+  // Khóa ngoại trỏ về Lĩnh vực nghiên cứu
+  field_id                String?
+  field                   Category?     @relation("TopicField", fields: [field_id], references: [category_id], onDelete: SetNull)
+
   // Khóa ngoại trỏ về Giảng viên hướng dẫn
-  lecturer_id      String?
-  lecturer         User?           @relation("LecturerTopics", fields: [lecturer_id], references: [user_id])
-  
+  lecturer_id             String?
+  lecturer                User?         @relation("LecturerTopics", fields: [lecturer_id], references: [user_id], onDelete: SetNull)
+
   // Khóa ngoại trỏ về Hội đồng chấm thi
-  council_id       String?
-  council          Council?        @relation(fields: [council_id], references: [council_id])
+  council_id              String?
+  council                 Council?      @relation(fields: [council_id], references: [council_id], onDelete: SetNull)
 
   // Mối quan hệ ngược
-  members          TopicMember[]
-  documents        Document[]
-  tasks            Task[]
-  comments         Comment[]
-  scores           Score[]
+  members                 TopicMember[]
+  documents               Document[]
+  tasks                   Task[]
+  comments                Comment[]
+  scores                  Score[]
 }
 
 // 5. BẢNG NHÓM SINH VIÊN (Quản lý đơn ứng tuyển và thành viên)
 model TopicMember {
   // Khóa chính
   id             String  @id @default(uuid())
-  
+
   // Khóa ngoại trỏ về Đề tài
   topic_id       String
-  topic          Topic   @relation(fields: [topic_id], references: [topic_id])
-  
+  topic          Topic   @relation(fields: [topic_id], references: [topic_id], onDelete: Cascade)
+
   // Khóa ngoại trỏ về Sinh viên tham gia
   student_id     String
-  student        User    @relation(fields: [student_id], references: [user_id])
-  
+  student        User    @relation(fields: [student_id], references: [user_id], onDelete: Cascade)
+
   // Lời tự giới thiệu khi sinh viên nộp đơn
   cover_letter   String?
   // Trạng thái duyệt nhóm: PENDING, APPROVED, REJECTED
   status         String
 }
 
-// 6. BẢNG TÀI LIỆU (Lưu link file tải lên Firebase)
+// 6. BẢNG TÀI LIỆU (Lưu đường dẫn file đã tải lên Supabase Storage)
 model Document {
   // Khóa chính
   document_id    String   @id @default(uuid())
-  
+
   // Khóa ngoại trỏ về Đề tài
   topic_id       String
-  topic          Topic    @relation(fields: [topic_id], references: [topic_id])
-  
+  topic          Topic    @relation(fields: [topic_id], references: [topic_id], onDelete: Cascade)
+
   // Tên file hiển thị trên web
   file_name      String
-  // Link an toàn trỏ đến Firebase Storage
+  // Dung lượng file (bytes)
+  file_size      Int      @default(0)
+  // Vị trí file: "supabase:<đường dẫn trong bucket>" hoặc "local:<tên file trong thư mục uploads>"
   file_url       String
   // Mô tả ngắn gọn về file
   description    String?
@@ -143,11 +167,11 @@ model Document {
 model Task {
   // Khóa chính
   task_id        String  @id @default(uuid())
-  
+
   // Khóa ngoại trỏ về Đề tài
   topic_id       String
-  topic          Topic   @relation(fields: [topic_id], references: [topic_id])
-  
+  topic          Topic   @relation(fields: [topic_id], references: [topic_id], onDelete: Cascade)
+
   // Tên công việc hoặc báo cáo tuần
   title          String
   // Trạng thái thẻ trên Kanban (Chờ đánh giá, Hoàn thành)
@@ -157,33 +181,35 @@ model Task {
 // 8. BẢNG BÌNH LUẬN (Nhận xét của giảng viên)
 model Comment {
   // Khóa chính
-  comment_id     String  @id @default(uuid())
-  
+  comment_id     String   @id @default(uuid())
+
   // Khóa ngoại trỏ về Đề tài
   topic_id       String
-  topic          Topic   @relation(fields: [topic_id], references: [topic_id])
-  
+  topic          Topic    @relation(fields: [topic_id], references: [topic_id], onDelete: Cascade)
+
   // Khóa ngoại trỏ về người viết bình luận
   user_id        String
-  user           User    @relation(fields: [user_id], references: [user_id])
-  
+  user           User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
   // Nội dung góp ý
   content        String
+  // Thời điểm viết bình luận
+  created_at     DateTime @default(now())
 }
 
 // 9. BẢNG THÀNH VIÊN HỘI ĐỒNG (Ai làm chủ tịch, thư ký...)
 model CouncilMember {
   // Khóa chính
   id              String  @id @default(uuid())
-  
+
   // Khóa ngoại trỏ về Hội đồng
   council_id      String
-  council         Council @relation(fields: [council_id], references: [council_id])
-  
+  council         Council @relation(fields: [council_id], references: [council_id], onDelete: Cascade)
+
   // Khóa ngoại trỏ về Giảng viên tham gia
   lecturer_id     String
-  lecturer        User    @relation(fields: [lecturer_id], references: [user_id])
-  
+  lecturer        User    @relation(fields: [lecturer_id], references: [user_id], onDelete: Cascade)
+
   // Vai trò: CHUTICH, THUKY, UYVIEN
   role_in_council String
 }
@@ -192,15 +218,15 @@ model CouncilMember {
 model Score {
   // Khóa chính
   score_id       String  @id @default(uuid())
-  
+
   // Khóa ngoại trỏ về Đề tài
   topic_id       String
-  topic          Topic   @relation(fields: [topic_id], references: [topic_id])
-  
+  topic          Topic   @relation(fields: [topic_id], references: [topic_id], onDelete: Cascade)
+
   // Khóa ngoại trỏ về Giảng viên/Thành viên chấm
   user_id        String
-  user           User    @relation(fields: [user_id], references: [user_id])
-  
+  user           User    @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
   // Điểm số theo thang 10
   score_value    Float
   // Nhận xét phản biện đi kèm
@@ -224,14 +250,16 @@ model Timeline {
 // 12. BẢNG THÔNG BÁO (Hiển thị chuông trên website)
 model Notification {
   // Khóa chính
-  notification_id String  @id @default(uuid())
-  
+  notification_id String   @id @default(uuid())
+
   // Khóa ngoại trỏ về người nhận thông báo
   user_id         String
-  user            User    @relation(fields: [user_id], references: [user_id])
-  
+  user            User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
   // Nội dung thông báo
   content         String
   // Đánh dấu đã đọc hay chưa
-  is_read         Boolean @default(false)
+  is_read         Boolean  @default(false)
+  // Thời điểm tạo thông báo (sắp xếp mới nhất lên đầu)
+  created_at      DateTime @default(now())
 }

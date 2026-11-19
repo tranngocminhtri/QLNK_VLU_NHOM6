@@ -78,6 +78,7 @@ export default function AdminPage({
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserCode, setNewUserCode] = useState('');
   const [newUserRole, setNewUserRole] = useState('STUDENT');
+  const [newUserPassword, setNewUserPassword] = useState('');
   const [userToDelete, setUserToDelete] = useState(null);
 
   const stats = useMemo(() => {
@@ -201,8 +202,8 @@ export default function AdminPage({
                   <button
                     type="button"
                     className="btn btn-outline"
-                    onClick={() => {
-                      const res = onResetSampleData();
+                    onClick={async () => {
+                      const res = await onResetSampleData();
                       setFeedback({
                         type: 'success',
                         text: res?.message || 'Đã khôi phục dữ liệu mẫu ban đầu!',
@@ -373,9 +374,9 @@ export default function AdminPage({
                           <button
                             type="button"
                             className="btn btn-danger btn-sm"
-                            onClick={() => {
+                            onClick={async () => {
                               try {
-                                const res = onReviewAndAssignTopic(topic.topic_id, {
+                                const res = await onReviewAndAssignTopic(topic.topic_id, {
                                   action: 'REJECT',
                                   reject_reason: rejectReasonByTopic[topic.topic_id],
                                 });
@@ -402,9 +403,9 @@ export default function AdminPage({
                         <button
                           type="button"
                           className="btn btn-primary"
-                          onClick={() => {
+                          onClick={async () => {
                             try {
-                              const res = onReviewAndAssignTopic(topic.topic_id, {
+                              const res = await onReviewAndAssignTopic(topic.topic_id, {
                                 action: 'APPROVE',
                                 lecturer_id: chosenLecturerId,
                               });
@@ -447,11 +448,11 @@ export default function AdminPage({
 
           <form
             className="form-grid sub-card"
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
               setFeedback({ type: '', text: '' });
               try {
-                const res = onCreateCouncil({
+                const res = await onCreateCouncil({
                   name: councilName,
                   chairman_id: chairmanId,
                   secretary_id: secretaryId,
@@ -591,9 +592,9 @@ export default function AdminPage({
                           key={pt.topic_id}
                           type="button"
                           className="btn-xs btn-preview"
-                          onClick={() => {
+                          onClick={async () => {
                             try {
-                              const res = onAssignTopicToCouncil(pt.topic_id, c.council_id);
+                              const res = await onAssignTopicToCouncil(pt.topic_id, c.council_id);
                               setFeedback({ type: 'success', text: res.message });
                             } catch (err) {
                               setFeedback({ type: 'error', text: err.message });
@@ -624,11 +625,11 @@ export default function AdminPage({
 
           <form
             className="form-grid sub-card"
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
               setFeedback({ type: '', text: '' });
               try {
-                const res = onSaveTimeline({
+                const res = await onSaveTimeline({
                   event_name: eventName,
                   start_date: startDate,
                   end_date: endDate,
@@ -700,8 +701,8 @@ export default function AdminPage({
                       <button
                         type="button"
                         className="btn-xs btn-move"
-                        onClick={() => {
-                          const res = onDeleteTimeline(tl.timeline_id);
+                        onClick={async () => {
+                          const res = await onDeleteTimeline(tl.timeline_id);
                           setFeedback({ type: 'success', text: res.message });
                         }}
                       >
@@ -725,11 +726,11 @@ export default function AdminPage({
 
             <form
               style={{ marginTop: '14px' }}
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
                 setFeedback({ type: '', text: '' });
                 try {
-                  const res = onCreateCategory({ name: catName, type: catType });
+                  const res = await onCreateCategory({ name: catName, type: catType });
                   setFeedback({ type: 'success', text: res.message });
                   setCatName('');
                 } catch (err) {
@@ -772,7 +773,11 @@ export default function AdminPage({
                   <button
                     type="button"
                     className="btn-text-xs"
-                    onClick={() => onDeleteCategory(c.category_id)}
+                    onClick={() =>
+                      onDeleteCategory(c.category_id).catch((err) =>
+                        setFeedback({ type: 'error', text: err.message })
+                      )
+                    }
                   >
                     ✕
                   </button>
@@ -791,20 +796,22 @@ export default function AdminPage({
             <form
               className="sub-card"
               style={{ marginTop: '14px', marginBottom: '16px' }}
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
                 setFeedback({ type: '', text: '' });
                 try {
-                  const res = onCreateUser({
+                  const res = await onCreateUser({
                     full_name: newUserName,
                     email: newUserEmail,
                     user_code: newUserCode,
                     role: newUserRole,
+                    password: newUserPassword,
                   });
                   setFeedback({ type: 'success', text: res.message });
                   setNewUserName('');
                   setNewUserEmail('');
                   setNewUserCode('');
+                  setNewUserPassword('');
                 } catch (err) {
                   setFeedback({ type: 'error', text: err.message });
                 }
@@ -854,6 +861,17 @@ export default function AdminPage({
                     <option value="ADMIN">Quản lý Khoa (ADMIN)</option>
                   </select>
                 </div>
+                <div className="form-group">
+                  <label>Mật khẩu ban đầu (để trống nếu chỉ đăng nhập Google)</label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    placeholder="Tối thiểu 8 ký tự"
+                    autoComplete="new-password"
+                    value={newUserPassword}
+                    onChange={(e) => setNewUserPassword(e.target.value)}
+                  />
+                </div>
               </div>
               <button type="submit" className="btn btn-primary btn-sm" style={{ marginTop: '10px' }}>
                 + Tạo tài khoản
@@ -884,9 +902,9 @@ export default function AdminPage({
                         style={{ width: 'auto', padding: '4px 8px', fontSize: '12px' }}
                         value={u.role}
                         disabled={isSelf}
-                        onChange={(e) => {
+                        onChange={async (e) => {
                           try {
-                            const res = onUpdateUserRole(u.user_id, e.target.value);
+                            const res = await onUpdateUserRole(u.user_id, e.target.value);
                             setFeedback({ type: 'success', text: res.message });
                           } catch (err) {
                             setFeedback({ type: 'error', text: err.message });
@@ -903,9 +921,9 @@ export default function AdminPage({
                           <button
                             type="button"
                             className={`btn-xs ${u.is_locked ? 'btn-preview' : 'btn-move'}`}
-                            onClick={() => {
+                            onClick={async () => {
                               try {
-                                const res = onToggleUserLock(u.user_id);
+                                const res = await onToggleUserLock(u.user_id);
                                 setFeedback({ type: 'success', text: res.message });
                               } catch (err) {
                                 setFeedback({ type: 'error', text: err.message });
@@ -951,10 +969,10 @@ export default function AdminPage({
         confirmText="Xóa vĩnh viễn tài khoản"
         cancelText="Hủy bỏ"
         danger
-        onConfirm={() => {
+        onConfirm={async () => {
           if (!userToDelete) return;
           try {
-            const res = onDeleteUser(userToDelete.user_id);
+            const res = await onDeleteUser(userToDelete.user_id);
             setFeedback({ type: 'success', text: res.message });
           } catch (err) {
             setFeedback({ type: 'error', text: err.message });

@@ -1,41 +1,51 @@
-// Nhập hook useMemo từ React để tính toán đường dẫn hiển thị tệp PDF trực tiếp
-import { useMemo } from 'react';
+// Nhập hook useEffect, useState từ React để tải nội dung tệp PDF từ máy chủ
+import { useEffect, useState } from 'react';
 // Nhập huy hiệu hiển thị trạng thái nộp đúng hạn hay trễ hạn
 import { SubmitStatusBadge } from './StatusBadge';
-// Nhập hàm chuyển đổi Blob và tải xuống tệp thật từ fileHelper
-import { chuyenDataUrlSangBlob, downloadRealDocument } from '../utils/fileHelper';
+// Nhập hàm tải xuống tệp thật từ fileHelper
+import { downloadRealDocument } from '../utils/fileHelper';
+// Nhập hàm tải nội dung file (kèm JWT) từ máy chủ
+import { apiFetchDocumentBlob } from '../services/api';
 // Nhập hàm định dạng ngày giờ chuẩn tiếng Việt
 import { formatDateTimeVN } from '../utils/validators';
 
 // Thành phần Modal Xem trực tiếp (Preview) và Tải xuống tệp báo cáo thật (UC06, UC11, UC19)
 export default function DocumentPreviewModal({ documentItem, topic, onClose }) {
-  // Tạo đường dẫn hiển thị tệp PDF thực tế cho khung iframe
-  const iframeSrc = useMemo(
+  // Đường dẫn Blob tạm thời của file PDF để nhúng vào khung iframe
+  const [iframeSrc, setIframeSrc] = useState('');
+  const [loiTaiTep, setLoiTaiTep] = useState('');
+
+  const tenFileThuong = (documentItem?.file_name || '').toLowerCase();
+  const isPdf = tenFileThuong.endsWith('.pdf');
+  const documentId = documentItem?.document_id;
+
+  // Tải nội dung PDF qua API (máy chủ kiểm tra quyền xem) rồi tạo Blob URL để trình duyệt hiển thị
+  useEffect(
     function () {
-      if (!documentItem) {
-        return '';
-      }
-      // Nếu tài liệu có nội dung nhị phân gốc (file_data_url) thì tạo Blob URL để đọc ngay trên trình duyệt
-      if (documentItem.file_data_url && documentItem.file_data_url.startsWith('data:')) {
-        const blob = chuyenDataUrlSangBlob(documentItem.file_data_url);
-        if (blob) {
-          return URL.createObjectURL(blob);
-        }
-      }
-      // Ngược lại sử dụng đường dẫn file trực tiếp từ máy chủ (/uploads/...)
-      return documentItem.file_url || '';
+      if (!documentId || !isPdf) return undefined;
+      let blobUrl = '';
+      let daHuy = false;
+      apiFetchDocumentBlob(documentId)
+        .then(function (blob) {
+          if (daHuy) return;
+          blobUrl = URL.createObjectURL(blob);
+          setIframeSrc(blobUrl);
+          setLoiTaiTep('');
+        })
+        .catch((err) => !daHuy && setLoiTaiTep(err.message));
+      return function () {
+        daHuy = true;
+        setIframeSrc('');
+        if (blobUrl) URL.revokeObjectURL(blobUrl);
+      };
     },
-    [documentItem]
+    [documentId, isPdf]
   );
 
   // Nếu chưa chọn tài liệu nào thì không hiển thị cửa sổ
   if (!documentItem) {
     return null;
   }
-
-  // Kiểm tra xem tệp tin có phải định dạng PDF hay không
-  const tenFileThuong = (documentItem.file_name || '').toLowerCase();
-  const isPdf = tenFileThuong.endsWith('.pdf');
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -79,6 +89,12 @@ export default function DocumentPreviewModal({ documentItem, topic, onClose }) {
               <strong>{documentItem.description || 'Báo cáo tiến độ đề tài'}</strong>
             </div>
           </div>
+
+          {loiTaiTep && (
+            <div className="alert-warning" style={{ marginTop: '14px' }}>
+              {loiTaiTep}
+            </div>
+          )}
 
           {/* Nếu là file PDF và có đường dẫn hợp lệ -> Nhúng trình đọc PDF thật vào khung iframe */}
           {isPdf && iframeSrc ? (
